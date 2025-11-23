@@ -12,6 +12,8 @@ explore moves.
 class Visited(Predicate):
     pass
 
+class NotVisited(Predicate):
+    pass
 
 class LastSeen(Predicate):
     pass
@@ -44,12 +46,15 @@ class StrategicGhost(Ghost):
     def __init__(self, color="Orange"):
         super().__init__(color)
         self.kb = FOLKB()
+        self.visited = set()
 
     def decide_move(self, grid):
         # Transient state: clear clauses but keep agent memory (self.visited)
         self.kb.clauses = []
 
         x, y = self.position
+        self.visited.add((x, y))
+
         me = Constant("Me")
         curr_c = Constant(f"C_{x}_{y}")
         
@@ -90,6 +95,11 @@ class StrategicGhost(Ghost):
                 else:
                      self.kb.tell((Predicate("NotDeadEnd", [next_c]), []))
 
+                # Fact 4: Visited Status
+                if (nx, ny) in self.visited:
+                    self.kb.tell((Predicate("Visited", [next_c]), []))
+                else:
+                    self.kb.tell((Predicate("NotVisited", [next_c]), []))
             
             # Fact 5 (Pacman perception)
             if self.last_known_pacman_pos:
@@ -118,13 +128,20 @@ class StrategicGhost(Ghost):
             Predicate("Closer", [v_next])
         ]))
 
-        # Rule 2: Explore - Not Dead End -> GoodMove(m)
+        # Rule 2: Explore - Not Dead End AND Not Visited -> ExploreMove(m)
+        self.kb.tell((Predicate("ExploreMove", [v_next]), [
+            Predicate("Safe", [v_next]),
+            Predicate("NotDeadEnd", [v_next]),
+            Predicate("NotVisited", [v_next])
+        ]))
+
+        # Rule 3: Good Move (General) - Not Dead End -> GoodMove(m)
         self.kb.tell((Predicate("GoodMove", [v_next]), [
             Predicate("Safe", [v_next]),
             Predicate("NotDeadEnd", [v_next])
         ]))
         
-        # Rule 3: Any Safe Move -> PossibleMove(m)
+        # Rule 4: Any Safe Move -> PossibleMove(m)
         self.kb.tell((Predicate("PossibleMove", [v_next]), [
             Predicate("Safe", [v_next])
         ]))
@@ -138,7 +155,16 @@ class StrategicGhost(Ghost):
             parts = choice.name.split('_')
             return (int(parts[1]), int(parts[2]))
 
-        # Priority 2: GoodMove (Avoid Dead Ends)
+        # Priority 2: ExploreMove (Unvisited & Not Dead End)
+        query = Predicate("ExploreMove", [Variable("m")])
+        results = list(self.kb.ask(query))
+        if results:
+            import random
+            choice = random.choice(results)[Variable("m")]
+            parts = choice.name.split('_')
+            return (int(parts[1]), int(parts[2]))
+
+        # Priority 3: GoodMove (Avoid Dead Ends, but maybe visited)
         query = Predicate("GoodMove", [Variable("m")])
         results = list(self.kb.ask(query))
         if results:
@@ -148,7 +174,7 @@ class StrategicGhost(Ghost):
             parts = choice.name.split('_')
             return (int(parts[1]), int(parts[2]))
 
-        # Priority 3: PossibleMove (Fallback)
+        # Priority 4: PossibleMove (Fallback)
         query = Predicate("PossibleMove", [Variable("m")])
         results = list(self.kb.ask(query))
         if results:
