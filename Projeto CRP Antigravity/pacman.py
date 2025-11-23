@@ -8,10 +8,15 @@ import time
 # Assumindo que o pacote src está no python path. 
 # Como pacman.py está na raiz e src é um subdiretório, isso deve funcionar se executado da raiz.
 try:
-    from src.agents.prop_ghosts import StalkerGhost, RandomGhost
+    from src.agents.prop_ghosts import StalkerGhost, PatrolGhost
+except ImportError:
+    print("Erro ao importar fantasmas proposicionais.")
+    pass
+
+try:
     from src.agents.fol_ghost import FOLGhost
 except ImportError:
-    # Fallback ou tratamento se os caminhos forem diferentes
+    print("Erro ao importar fantasma FOL.")
     pass
 
 Coord = Tuple[int, int]
@@ -412,11 +417,14 @@ def run_pacman():
     # Adicionar Fantasmas
     # Precisamos garantir que as importações funcionaram
     try:
-        env.add_ghost(StalkerGhost(color="Red"))
-        env.add_ghost(RandomGhost(color="Green"))
-        env.add_ghost(FOLGhost(color="Pink"))
-    except NameError:
-        print("Aviso: Classes de fantasmas não encontradas. Executando sem fantasmas.")
+        if 'StalkerGhost' in globals():
+            env.add_ghost(StalkerGhost(color="Red"))
+        if 'PatrolGhost' in globals():
+            env.add_ghost(PatrolGhost(color="Green"))
+        if 'FOLGhost' in globals():
+            env.add_ghost(FOLGhost(color="Pink"))
+    except Exception as e:
+        print(f"Aviso: Erro ao adicionar fantasmas: {e}")
 
     run_game(env)
 
