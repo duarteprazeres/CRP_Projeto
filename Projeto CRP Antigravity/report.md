@@ -14,6 +14,12 @@ O ficheiro `main.py` contém o loop principal, gerindo a renderização e o inpu
 - **Input**: Utiliza `curses` para capturar as setas do teclado de forma não-bloqueante.
 - **Renderização**: Desenha o estado do jogo a cada frame, atribuindo cores distintas a cada elemento (Paredes, Pac-Man, Fantasmas).
 
+### 2.3 Geração Procedural de Níveis
+O jogo utiliza geração procedural para criar labirintos únicos a cada execução.
+- **Paredes**: Distribuídas aleatoriamente com uma densidade configurável.
+- **Pastilhas (Pellets)**: A colocação de pastilhas segue regras estritas para garantir a jogabilidade:
+    1.  **Conectividade e Acessibilidade**: Utiliza-se um algoritmo de *Flood Fill* (Busca em Largura) iniciado na posição de *spawn* do Pac-Man. Este algoritmo percorre o labirinto identificando todas as células alcançáveis. Apenas as células que fazem parte deste conjunto de "células visitadas" são elegíveis para receber pastilhas. Isso elimina a possibilidade de pastilhas serem geradas em áreas isoladas por paredes ou inacessíveis, garantindo que o nível seja sempre completável.
+
 ## 3. Motores de Lógica
 Implementámos dois motores de inferência de raiz:
 1.  **Lógica Proposicional (`src/logic/propositional.py`)**:
