@@ -22,6 +22,9 @@ class BestChaseMove(Predicate):
 class PossibleExploreMove(Predicate):
     pass
 
+class LeadsToPacman(Predicate):
+    pass
+
 
 # Helpers / variables used in rules
 v_me = Constant("Me")
@@ -29,8 +32,16 @@ v_curr = Variable("curr")
 v_next = Variable("next")
 v_target = Variable("target")
 
-class FOLGhost(Ghost):
-    def __init__(self, color="Pink"):
+class StrategicGhost(Ghost):
+    """
+    Uses First-Order Logic to move Strategically.
+    Rules:
+    - Avoid Dead Ends (unless Pacman is there).
+    - If Pacman is far, move randomly/explore.
+    - If Pacman is close (within 8 units), Chase.
+    - If Pacman is TOO close (within 2 units), maybe Flee? (Clyde behavior) - Let's stick to Strategic Chase.
+    """
+    def __init__(self, color="Orange"):
         super().__init__(color)
         self.kb = FOLKB()
 
@@ -41,15 +52,17 @@ class FOLGhost(Ghost):
         x, y = self.position
         me = Constant("Me")
         curr_c = Constant(f"C_{x}_{y}")
-        # Perceive neighbors and add basic facts to KB
-        # Fact 1: seed KB with the agent's current position (At(Me, C_x_y)).
-        # This initial fact is used as the starting point for inferences each turn.
+        
+        # Fact 1: Current Position
         self.kb.tell((Predicate("At", [me, curr_c]), []))
 
         neighbors = [(0, -1), (0, 1), (1, 0), (-1, 0)]
         valid_moves = []
-
-        # Perceive neighbors and add basic facts to KB
+        
+        # Analyze surroundings to detect Dead Ends
+        # A cell is a dead end if it has only 1 valid neighbor (which is where we came from)
+        # But we need to know if the NEIGHBOR is a dead end.
+        
         for dx, dy in neighbors:
             nx, ny = x + dx, y + dy
             next_c = Constant(f"C_{nx}_{ny}")
@@ -58,71 +71,90 @@ class FOLGhost(Ghost):
             if cell_type != 'Wall':
                 valid_moves.append((nx, ny))
                 
-                # Fact 2: Connectivity (relation between cells)
+                # Fact 2: Connectivity
                 self.kb.tell((Predicate("Connected", [curr_c, next_c]), []))
-                # Fact 3: Safety (unary predicate)
+                # Fact 3: Safety
                 self.kb.tell((Predicate("Safe", [next_c]), []))
-            
-            # Fact 4 (FOL memory): add 'Visited' if the cell was visited (uses self.visited)
-            if (nx, ny) in self.visited:
-                self.kb.tell((Predicate("Visited", [next_c]), []))
-            
-            # Fact 5 (Pacman perception): if Pacman is adjacent
-            if self.last_known_pacman_pos == (nx, ny):
-                 self.kb.tell((Predicate("PacmanAt", [next_c]), []))
-        
-        # 2. Add Rules: chase first, otherwise consider safe moves
-        v_next = Variable("m")  # use 'm' as the variable for the move
+                
+                # Check if this neighbor is a Dead End (simplified check: does it have < 2 exits?)
+                # We can't easily check the neighbor's neighbors without querying the grid/belief map deeper.
+                # Let's assume we can query belief map for neighbor's neighbors.
+                n_exits = 0
+                for ndx, ndy in neighbors:
+                    nnx, nny = nx + ndx, ny + ndy
+                    if self.belief_map.get((nnx, nny), 'Unknown') != 'Wall':
+                        n_exits += 1
+                
+                if n_exits <= 1:
+                     self.kb.tell((Predicate("DeadEnd", [next_c]), []))
+                else:
+                     self.kb.tell((Predicate("NotDeadEnd", [next_c]), []))
 
-        # BestMove rule: chase when Pacman is at a cell and that cell is safe. (PacmanAt(m) & Safe(m) -> BestMove(m))
+            
+            # Fact 5 (Pacman perception)
+            if self.last_known_pacman_pos:
+                px, py = self.last_known_pacman_pos
+                
+                # Distance logic
+                dist = abs(px - nx) + abs(py - ny)
+                
+                if dist < 8:
+                    self.kb.tell((Predicate("CloseToPacman", [next_c]), []))
+                
+                if dist < abs(px - x) + abs(py - y):
+                     self.kb.tell((Predicate("Closer", [next_c]), []))
+
+        # 2. Add Rules
+        v_next = Variable("m")
+
+        # Rule 1: Strategic Move - Not Dead End AND Closer to Pacman (if close)
+        # If Pacman is close, we want to get closer, but avoid dead ends if possible?
+        # Actually, if Pacman is in a dead end, we should go there.
+        # Let's simplify:
+        # If CloseToPacman(m) AND Closer(m) -> BestMove(m)
         self.kb.tell((Predicate("BestMove", [v_next]), [
-            Predicate("PacmanAt", [v_next]),
-            Predicate("Safe", [v_next])
+            Predicate("Safe", [v_next]),
+            Predicate("CloseToPacman", [v_next]),
+            Predicate("Closer", [v_next])
         ]))
 
-        # PossibleMove rule: any safe cell is a candidate move (Safe(m) -> PossibleMove(m))
-        self.kb.tell((Predicate("PossibleMove", [v_next]), [
-            Predicate("Safe", [v_next])
-        ]))
-        self.kb.tell((Predicate("PossibleMove", [v_next]), [
-            Predicate("Safe", [v_next])
+        # Rule 2: Explore - Not Dead End -> GoodMove(m)
+        self.kb.tell((Predicate("GoodMove", [v_next]), [
+            Predicate("Safe", [v_next]),
+            Predicate("NotDeadEnd", [v_next])
         ]))
         
-        # 3. Decide the move (query)
+        # Rule 3: Any Safe Move -> PossibleMove(m)
+        self.kb.tell((Predicate("PossibleMove", [v_next]), [
+            Predicate("Safe", [v_next])
+        ]))
 
-        # Priority 1: BestMove (immediate chase)
-        query_chase = Predicate("BestMove", [Variable("m")])
-        results_chase = list(self.kb.ask(query_chase))
-        if results_chase:
-            choice = results_chase[0][Variable("m")]
+        # 3. Decide
+        # Priority 1: BestMove
+        query = Predicate("BestMove", [Variable("m")])
+        results = list(self.kb.ask(query))
+        if results:
+            choice = results[0][Variable("m")]
             parts = choice.name.split('_')
             return (int(parts[1]), int(parts[2]))
 
-        # Priority 2: Explore unvisited safe moves
-        query_explore = Predicate("PossibleMove", [Variable("m")])
-        results_explore = list(self.kb.ask(query_explore))
-
-        unvisited_moves = []
-        for res in results_explore:
-            choice = res[Variable("m")]
+        # Priority 2: GoodMove (Avoid Dead Ends)
+        query = Predicate("GoodMove", [Variable("m")])
+        results = list(self.kb.ask(query))
+        if results:
+            # Pick random good move
+            import random
+            choice = random.choice(results)[Variable("m")]
             parts = choice.name.split('_')
-            nx, ny = int(parts[1]), int(parts[2])
-            
-            # If the Visited(C_nx_ny) predicate is NOT in KB, it's an exploration move
-            if (nx, ny) not in self.visited:
-                unvisited_moves.append((nx, ny))
+            return (int(parts[1]), int(parts[2]))
 
-        if unvisited_moves:
-            # Choose a random unvisited cell (pure exploration)
-            mx, my = random.choice(unvisited_moves)
-            self.last_move = (mx - x, my - y)
-            return (mx, my)
+        # Priority 3: PossibleMove (Fallback)
+        query = Predicate("PossibleMove", [Variable("m")])
+        results = list(self.kb.ask(query))
+        if results:
+            import random
+            choice = random.choice(results)[Variable("m")]
+            parts = choice.name.split('_')
+            return (int(parts[1]), int(parts[2]))
 
-        # Priority 3: Fallback (move to any safe cell, even if visited)
-        if valid_moves:
-            mx, my = random.choice(valid_moves)
-            self.last_move = (mx - x, my - y)
-            return (mx, my)
-
-        self.last_move = None
         return None

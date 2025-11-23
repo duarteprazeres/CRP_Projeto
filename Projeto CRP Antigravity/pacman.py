@@ -5,16 +5,16 @@ import sys
 import time
 
 # Importar agentes fantasmas existentes
-# Assumindo que o pacote src está no python path. 
+# Assumindo que o pacote src está no python path.
 # Como pacman.py está na raiz e src é um subdiretório, isso deve funcionar se executado da raiz.
 try:
-    from src.agents.prop_ghosts import StalkerGhost, PatrolGhost
+    from src.agents.prop_ghosts import StalkerGhost, AmbushGhost
 except ImportError:
     print("Erro ao importar fantasmas proposicionais.")
     pass
 
 try:
-    from src.agents.fol_ghost import FOLGhost
+    from src.agents.fol_ghost import StrategicGhost
 except ImportError:
     print("Erro ao importar fantasma FOL.")
     pass
@@ -283,6 +283,19 @@ class Environment:
         BLUE = '\033[94m'
         GREEN = '\033[92m'
         YELLOW = '\033[93m'
+        RED = '\033[91m'
+        PINK = '\033[95m'
+        ORANGE = '\033[33m' # Usando amarelo escuro/standard para laranja se 256 cores não for garantido, ou 38;5;208
+        # Vamos tentar um laranja mais distinto se possível, mas 33 é seguro.
+        # Melhor: Red=91, Pink=95, Orange=33 (pode confundir com Pacman 93).
+        # Vamos usar:
+        COLOR_MAP = {
+            'Red': '\033[91m',
+            'Pink': '\033[95m',
+            'Orange': '\033[33m', # Amarelo normal
+            'Green': '\033[92m',
+            'Blue': '\033[94m'
+        }
         RESET = '\033[0m'
 
         buf: List[str] = []
@@ -299,8 +312,10 @@ class Environment:
                 if c == self.pacman_pos:
                     ch = f"{YELLOW}P{RESET}"
                 elif c in ghost_map:
-                    # Fantasmas a verde
-                    ch = f"{GREEN}G{RESET}" 
+                    # Cor baseada no fantasma
+                    g = ghost_map[c]
+                    color_code = COLOR_MAP.get(g.color, GREEN) # Default verde
+                    ch = f"{color_code}G{RESET}" 
                 elif c in self.walls:
                     ch = f"{BLUE}#{RESET}"
                 elif c in self.pellets:
@@ -328,9 +343,23 @@ def generate_maze(
     """Gerar paredes, pastilhas e a posição inicial do Pac-Man."""
     # Adicionar paredes aleatórias
     rng = random.Random()
-    all_positions = [(x, y) for y in range(0, h) for x in range(0, w)]
-    k_walls = int(wall_density * len(all_positions))
-    walls = set(rng.sample(all_positions, k_walls)) if k_walls > 0 else set()
+    
+    # Definir paredes de borda
+    border_walls = set()
+    for x in range(w):
+        border_walls.add((x, 0))
+        border_walls.add((x, h - 1))
+    for y in range(h):
+        border_walls.add((0, y))
+        border_walls.add((w - 1, y))
+        
+    # Espaço interno para paredes aleatórias
+    inner_positions = [(x, y) for y in range(1, h - 1) for x in range(1, w - 1)]
+    
+    k_walls = int(wall_density * len(inner_positions))
+    random_walls = set(rng.sample(inner_positions, k_walls)) if k_walls > 0 else set()
+    
+    walls = border_walls.union(random_walls)
 
     # Garantir que a posição inicial do Pac-Man não contenha uma parede
     # Vamos escolher uma posição inicial segura
@@ -339,6 +368,7 @@ def generate_maze(
         walls.discard(pacman_start)
     
     # Identificar células livres
+    all_positions = [(x, y) for y in range(0, h) for x in range(0, w)]
     free_cells = [c for c in all_positions if c not in walls and c != pacman_start]
     
     # 1. Verificar Conectividade (Flood Fill a partir do Pacman)
@@ -419,10 +449,10 @@ def run_pacman():
     try:
         if 'StalkerGhost' in globals():
             env.add_ghost(StalkerGhost(color="Red"))
-        if 'PatrolGhost' in globals():
-            env.add_ghost(PatrolGhost(color="Green"))
-        if 'FOLGhost' in globals():
-            env.add_ghost(FOLGhost(color="Pink"))
+        if 'AmbushGhost' in globals():
+            env.add_ghost(AmbushGhost(color="Pink"))
+        if 'StrategicGhost' in globals():
+            env.add_ghost(StrategicGhost(color="Orange"))
     except Exception as e:
         print(f"Aviso: Erro ao adicionar fantasmas: {e}")
 
