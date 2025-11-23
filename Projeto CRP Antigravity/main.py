@@ -1,7 +1,7 @@
 import curses
 import time
 from src.game import Game
-from src.agents.prop_ghosts import StalkerGhost, RandomGhost
+from src.agents.prop_ghosts import StalkerGhost, PatrolGhost
 from src.agents.fol_ghost import FOLGhost
 
 def draw(stdscr, game, message=None):
@@ -50,7 +50,7 @@ def draw(stdscr, game, message=None):
             except curses.error:
                 pass # Ignore errors if terminal is too small
 
-    # HUD
+    # HUD - Display Score, Lives and Controls
     hud_y = game.grid.height + 1
     try:
         stdscr.addstr(hud_y, 0, f" Score: {game.score} ", curses.color_pair(5) | curses.A_BOLD)
@@ -59,7 +59,7 @@ def draw(stdscr, game, message=None):
     except curses.error:
         pass
 
-    # Message
+    # End-game message (GAME OVER / VICTORY) - blinks in center of screen
     if message:
         msg_y = game.grid.height // 2
         msg_x = max(0, (game.grid.width // 2) - (len(message) // 2))
@@ -71,17 +71,17 @@ def draw(stdscr, game, message=None):
     stdscr.refresh()
 
 def main(stdscr):
-    curses.curs_set(0)
-    curses.start_color()
-    curses.use_default_colors()
-    stdscr.nodelay(True)
-    stdscr.timeout(150) # Game speed
+    curses.curs_set(0)  # Hide blinking cursor
+    curses.start_color()  # Enable color support
+    curses.use_default_colors()  # Use terminal default colors
+    stdscr.nodelay(True)  # Non-blocking mode: game doesn't wait for input
+    stdscr.timeout(150)  # Game speed: ~150ms per frame
 
     game = Game()
     
     # Add real ghosts
     game.add_ghost(StalkerGhost(color="Red"))
-    game.add_ghost(RandomGhost(color="Green"))
+    game.add_ghost(PatrolGhost(color="Green"))
     game.add_ghost(FOLGhost(color="Pink"))
 
     key_map = {
@@ -104,15 +104,12 @@ def main(stdscr):
             break
         
         if game.game_over:
-            stdscr.timeout(-1) # Wait for quit
+            stdscr.timeout(-1)
             continue
 
         if key in key_map:
             game.handle_input(key_map[key])
         
-        # Update game state (ghosts move every frame/tick)
-        # To make it fair, maybe ghosts move slower? 
-        # For now, update every tick.
         game.update()
 
 if __name__ == "__main__":

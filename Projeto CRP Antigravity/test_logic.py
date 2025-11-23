@@ -42,17 +42,7 @@ class TestFOL(unittest.TestCase):
         self.assertEqual(theta[x], a)
 
     def test_bc(self):
-        kb = FOLKB()
-        # American(x) & Weapon(y) & Sells(x, y, z) & Hostile(z) -> Criminal(x)
-        # Facts:
-        # Owns(Nono, M1)
-        # Missile(M1)
-        # ... simplified example
-        
-        # Rule: Cat(x) -> Animal(x)
-        # Fact: Cat(Tom)
-        # Query: Animal(Tom)?
-        
+        kb = FOLKB()     
         v_x = Variable("x")
         c_tom = Constant("Tom")
         

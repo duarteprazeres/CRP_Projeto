@@ -5,13 +5,10 @@ class Ghost:
         self.position = (0, 0)
         self.color = color
         self.last_known_pacman_pos = None
-        # Belief map: (x,y) -> 'Wall', 'Empty', 'Unknown'
-        self.belief_map = {} 
+        # Belief map: (x,y) -> 'Wall'|'Empty'|'Unknown'
+        self.belief_map = {}
         self.visited = set()
-        # Possible Pacman Locations: Set of (x,y) where Pacman COULD be.
-        # Initially, we don't know the grid size, so we can't populate this fully.
-        # We will assume Pacman can be anywhere we haven't seen recently.
-        # Actually, let's just track where we have seen 'Empty' but not Pacman.
+        # Possible Pacman locations (coarse tracking)
         self.possible_pacman_locations = set()
 
     def set_position(self, pos):
@@ -40,18 +37,7 @@ class Ghost:
             # If we see him, we know exactly where he is
             self.possible_pacman_locations = {pacman_pos}
         else:
-            # If we don't see him, he could be in any 'Empty' cell in our belief map 
-            # that is NOT in our current view.
-            # Plus any 'Unknown' cells.
-            # For simplicity, let's just say:
-            # If we had a set of possible locations, we remove those currently visible (and empty).
-            # We also need to add neighbors of existing possible locations (movement model)?
-            # That's complex. Let's stick to: 
-            # 1. If we see him -> Set = {pos}
-            # 2. If we don't see him -> Remove visible cells from Set.
-            # But we need to add cells back if he moves?
-            # Let's just track "Last Known" and "Exploration" for now.
-            # The "Possible Locations" is useful for "I know he is NOT here".
+            # Pacman not visible: keep last_known_pacman_pos and basic possible set
             pass
 
     def decide_move(self, grid):
