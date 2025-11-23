@@ -1,6 +1,24 @@
 from src.agents.ghost import Ghost
-from src.logic.first_order import FOLKB, Predicate, Variable, Constant
+from src.logic.first_order import FOLKB, Predicate, Variable, Constant, fol_bc_ask
 import random
+
+# Fact Predicate: The cell (x, y) was visited
+class Visited(Predicate): pass 
+
+# Fact Predicate: The cell (x, y) was visited
+class LastSeen(Predicate): pass 
+
+# Conclusion Predicate: The best move for chasing
+class BestChaseMove(Predicate): pass 
+
+# Conclusion Predicate: The best move for exploration (avoiding visited cells)
+class PossibleExploreMove(Predicate): pass 
+
+# Variables (for use in rules)
+v_me = Constant("Me")
+v_curr = Variable("curr")
+v_next = Variable("next")
+v_target = Variable("target")
 
 class FOLGhost(Ghost):
     def __init__(self, color="Pink"):
@@ -9,111 +27,96 @@ class FOLGhost(Ghost):
         # We might want to keep a persistent KB for the map
         # But for movement decisions, we might clear the transient state
 
+    # EM src/agents/fol_ghost.py, dentro da classe FOLGhost:
+
     def decide_move(self, grid):
-        # Rebuild KB for the current state to decide best move
-        # We want to ask: BestMove(Self, ?m)
-        
-        self.kb.clauses = [] # Clear for now
+        # 1. Limpar KB para estado transitório (mantendo apenas memória de Visited)
+        self.kb.clauses = [] 
         
         x, y = self.position
         me = Constant("Me")
+        curr_c = Constant(f"C_{x}_{y}")
         
-        # 1. Add facts about current position and connectivity from Belief Map
-        # At(Me, x, y)
-        # Connected(x, y, nx, ny)
+        # Adicionar Fato: O Fantasma está na posição atual
+        self.kb.tell((Predicate("At", [me, curr_c]), [])) 
         
-        self.kb.tell(Predicate("At", [me, Constant(f"C_{x}_{y}")]))
-        
-        moves = []
         neighbors = [(0, -1), (0, 1), (1, 0), (-1, 0)]
+        valid_moves = []
+        
+        # 1. Adicionar Factos (Percepção e Memória)
         for dx, dy in neighbors:
             nx, ny = x + dx, y + dy
+            next_c = Constant(f"C_{nx}_{ny}")
             cell_type = self.belief_map.get((nx, ny), 'Unknown')
+            
             if cell_type != 'Wall':
-                moves.append((nx, ny))
-        for mx, my in moves:
-            self.kb.tell(Predicate("Connected", [Constant(f"C_{x}_{y}"), Constant(f"C_{mx}_{my}")]))
-            self.kb.tell(Predicate("Safe", [Constant(f"C_{mx}_{my}")]))
+                valid_moves.append((nx, ny))
+                
+                # Fato 1: Conectividade (Relação entre células)
+                self.kb.tell((Predicate("Connected", [curr_c, next_c]), []))
+                # Fato 2: Segurança (Predicado Unário)
+                self.kb.tell((Predicate("Safe", [next_c]), []))
             
-            # Add direction info to the connection?
-            # Connected(Current, Next, Direction)
-            # Let's infer direction or just return the Next cell as the move
+            # Fato 3 (Memória FOL): Adicionar 'Visited' se a célula foi visitada (usa self.visited)
+            if (nx, ny) in self.visited:
+                self.kb.tell((Predicate("Visited", [next_c]), []))
+            
+            # Fato 4 (Percepção de Pacman): Se Pacman está adjacente
+            if self.last_known_pacman_pos == (nx, ny):
+                 self.kb.tell((Predicate("PacmanAt", [next_c]), []))
         
-        # 2. Add facts about Pacman
-        target = self.last_known_pacman_pos
-        if target:
-            tx, ty = target
-            self.kb.tell(Predicate("PacmanAt", [Constant(f"C_{tx}_{ty}")]))
-            
-            # Heuristic: If Connected(Me, Next) & Closer(Next, Pacman) -> BestMove(Me, Next)
-            # Defining "Closer" in FOL is hard without math.
-            # We can pre-calculate "Closer" facts in Python and inject them.
-            
-            for mx, my in moves:
-                dist_current = abs(x - tx) + abs(y - ty)
-                dist_next = abs(mx - tx) + abs(my - ty)
-                if dist_next < dist_current:
-                    self.kb.tell(Predicate("Closer", [Constant(f"C_{mx}_{my}"), Constant(f"C_{tx}_{ty}")]))
+        # 2. Adicionar Regras (Lógica de Primeira Ordem)
+        v_next = Variable("m") # Usamos 'm' como variável para o movimento
 
-        # 3. Rules
-        # Rule 1: If Connected(Me, ?next) & Safe(?next) & PacmanAt(?p) & Closer(?next, ?p) -> BestMove(Me, ?next)
-        
-        # Variables
-        v_next = Variable("next")
-        v_p = Variable("p")
-        
-        # Body: Connected(Me, ?next), Safe(?next), PacmanAt(?p), Closer(?next, ?p)
-        # Head: BestMove(Me, ?next)
-        
-        # We need to handle the case where multiple are true.
-        # Let's just check entailment for each direction.
-        
-        # Basic Chasing Rules
-        # We will add a rule: BestMove is a move that is Closer to Pacman.
-        
-        rule_body = [
-            Predicate("At", [me, Variable("curr")]), 
-            Predicate("Connected", [Variable("curr"), v_next]),
-            Predicate("Safe", [v_next]),
-            Predicate("PacmanAt", [v_p]),
-            Predicate("Closer", [v_next, v_p])
-        ]
-        
-        self.kb.tell((Predicate("BestMove", [me, v_next]), rule_body))
-        
-        # Rule 2: Exploration - If no Pacman visible, prefer moves that are Safe.
-        # This is a weak rule, but better than nothing.
-        # Connected(Me, ?next) & Safe(?next) -> PossibleMove(Me, ?next)
-        
-        self.kb.tell((Predicate("PossibleMove", [me, v_next]), [
-            Predicate("At", [me, Variable("curr")]),
-            Predicate("Connected", [Variable("curr"), v_next]),
+        # Regra 1 (BestMove - CHASE): PacmanAt(?m) & Safe(?m) -> BestMove(?m)
+        self.kb.tell((Predicate("BestMove", [v_next]), [
+            Predicate("PacmanAt", [v_next]),
+            Predicate("Safe", [v_next])
+        ]))
+
+        # Regra 2 (ExploreMove - EXPLORER #7): Safe(?m) -> PossibleMove(?m)
+        # Este é o nosso conjunto de movimentos seguros base. A lógica de "não visitado" será no Python.
+        self.kb.tell((Predicate("PossibleMove", [v_next]), [
             Predicate("Safe", [v_next])
         ]))
         
-        # Query
-        # First try to find BestMove (Chase)
-        query = Predicate("BestMove", [me, Variable("m")])
-        results = list(self.kb.ask(query))
         
-        if results:
-            choice = results[0][Variable("m")]
+        # 3. Decidir o Movimento (Query)
+        
+        # Prioridade 1: BestMove (Perseguição imediata)
+        query_chase = Predicate("BestMove", [Variable("m")])
+        results_chase = list(self.kb.ask(query_chase))
+        if results_chase:
+            choice = results_chase[0][Variable("m")]
             parts = choice.name.split('_')
             return (int(parts[1]), int(parts[2]))
-            
-        # If no BestMove, try PossibleMove (Explore)
-        query_explore = Predicate("PossibleMove", [me, Variable("m")])
+
+        # Prioridade 2: ExploreMove (Explorador #7) - Tentar NÃO visitar
+        query_explore = Predicate("PossibleMove", [Variable("m")])
         results_explore = list(self.kb.ask(query_explore))
         
-        if results_explore:
-            # Pick a random one from possible moves to avoid repetitive patterns
-            # Or pick one that we haven't visited recently?
-            # For now, random choice from valid moves is better than always first.
-            choices = [res[Variable("m")] for res in results_explore]
-            choice = random.choice(choices)
+        # Filtrar os movimentos seguros para escolher apenas os que NÃO foram visitados.
+        unvisited_moves = []
+        for res in results_explore:
+            choice = res[Variable("m")]
             parts = choice.name.split('_')
-            return (int(parts[1]), int(parts[2]))
+            nx, ny = int(parts[1]), int(parts[2])
+            
+            # Se o predicado Visited(C_nx_ny) NÃO está na KB, é um movimento de Exploração
+            if (nx, ny) not in self.visited:
+                unvisited_moves.append((nx, ny))
+
+        if unvisited_moves:
+            # Escolhe aleatoriamente uma célula não visitada (Exploração pura)
+            mx, my = random.choice(unvisited_moves)
+            self.last_move = (mx - x, my - y)
+            return (mx, my)
+
+        # Prioridade 3: Fallback (Mover para qualquer célula segura, mesmo que visitada)
+        if valid_moves:
+            mx, my = random.choice(valid_moves)
+            self.last_move = (mx - x, my - y)
+            return (mx, my)
         
-        # Fallback
-        if moves: return random.choice(moves)
-        return (x, y)
+        self.last_move = None
+        return None

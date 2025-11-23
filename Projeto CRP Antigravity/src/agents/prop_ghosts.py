@@ -2,6 +2,7 @@ from src.agents.ghost import Ghost
 from src.logic.propositional import PropositionalKB, Symbol, And, Or, Not, Implication
 import random
 
+
 class PropGhost(Ghost):
     def __init__(self, color="Red"):
         super().__init__(color)
@@ -15,6 +16,7 @@ class PropGhost(Ghost):
         # or just add relevant facts about the immediate surroundings.
         pass
 
+
 class StalkerGhost(PropGhost):
     """
     Uses Propositional Logic to chase Pacman.
@@ -24,49 +26,62 @@ class StalkerGhost(PropGhost):
     ...
     """
     def decide_move(self, grid):
-        # NOTE: We ignore the 'grid' argument to enforce partial observability.
-        # We only use self.belief_map.
-        
-        self.kb.retract_all()
+        self.kb.retract_all() # Limpa a KB do turno anterior
         x, y = self.position
+        dirs = {'North': (0, -1), 'South': (0, 1), 'East': (1, 0), 'West': (-1, 0)}
+        pacman_visible = self.last_known_pacman_pos and (self.last_known_pacman_pos != self.position)
+        valid_moves = self.get_valid_moves(grid)
         
-        # 1. Identify valid moves from Belief Map
-        # We can only move to cells we KNOW are Empty (or visited).
-        # If a cell is Unknown, we might risk it? No, usually we move to known empty.
-        # But to explore, we must move towards Unknown.
-        # Let's say we can move to any cell that is NOT a Wall.
-        
-        possible_moves = []
-        neighbors = [(0, -1), (0, 1), (1, 0), (-1, 0)] # N, S, E, W
-        for dx, dy in neighbors:
+        # 1. Adicionar Factos (Proposições Atómicas)
+        for d_name, (dx, dy) in dirs.items():
             nx, ny = x + dx, y + dy
-            cell_type = self.belief_map.get((nx, ny), 'Unknown')
-            if cell_type != 'Wall':
-                possible_moves.append((nx, ny))
-        
-        if not possible_moves:
-            return (x, y)
+            
+            # Facto: {D}Safe
+            if (nx, ny) in valid_moves:
+                self.kb.tell(Symbol(f"{d_name}Safe"))
+            
+            # Facto: Pacman{D} (APENAS se for na célula vizinha - Reflexivo)
+            if pacman_visible and (nx, ny) == self.last_known_pacman_pos:
+                self.kb.tell(Symbol(f"Pacman{d_name}"))
 
-        # 2. Goal Selection
-        target = self.last_known_pacman_pos
-        
-        # If we don't have a target or we reached it and he's gone, explore.
-        if not target or target == (x, y):
-            # Exploration: Find nearest 'Unknown' cell or just random walk
-            # For Stalker, let's just random walk if lost
-            return random.choice(possible_moves)
+        # 2. Adicionar Regras
+        # Regra Prioritária (Chase Reflexivo): (Pacman{D} & {D}Safe) -> BestMove{D}
+        for d in dirs:
+            self.kb.tell(Implication(
+                And(Symbol(f"Pacman{d}"), Symbol(f"{d}Safe")), 
+                Symbol(f"BestMove{d}")
+            ))
 
-        # 3. Pathfinding (BFS) to Target
-        # We want to move towards 'target' using only known safe cells.
-        # If target is in 'Unknown' area, we path to the boundary.
+        # Regra Secundária (Fallback): {D}Safe -> SafeMove{D}
+        for d in dirs:
+            self.kb.tell(Implication(Symbol(f"{d}Safe"), Symbol(f"SafeMove{d}")))
+
+
+        # 3. Decidir o Movimento
+        best_moves = []
+        safe_moves = []
         
-        path = self._bfs((x, y), target)
+        # Prioridade 1: BestMove (Perseguição Reflexiva)
+        for d, (dx, dy) in dirs.items():
+            if self.kb.ask(Symbol(f"BestMove{d}")):
+                best_moves.append((dx, dy))
         
-        if path and len(path) > 1:
-            return path[1] # Next step
+        if best_moves:
+            self.last_move = random.choice(best_moves)
+            return (x + self.last_move[0], y + self.last_move[1])
+
+        # Prioridade 2: SafeMove (Exploração de baixo esforço/aleatório seguro)
+        for d, (dx, dy) in dirs.items():
+            if self.kb.ask(Symbol(f"SafeMove{d}")):
+                # Dupla verificação para garantir que o movimento é válido na grelha
+                if (x + dx, y + dy) in valid_moves: 
+                    safe_moves.append((dx, dy))
+                
+        if safe_moves:
+            self.last_move = random.choice(safe_moves)
+            return (x + self.last_move[0], y + self.last_move[1])
         
-        # If no path found (blocked by walls or unknown), random move
-        return random.choice(possible_moves)
+        return None
 
     def _bfs(self, start, goal):
         queue = [[start]]
@@ -98,6 +113,7 @@ class StalkerGhost(PropGhost):
                         queue.append(new_path)
         return None
 
+
 class RandomGhost(PropGhost):
     """
     Uses Propositional Logic but with different rules.
@@ -109,75 +125,54 @@ class RandomGhost(PropGhost):
         self.last_move = None
 
     def decide_move(self, grid):
-        self.kb.retract_all()
+        self.kb.retract_all() # Limpa a KB do turno anterior
         x, y = self.position
-        
-        # Get valid moves from Belief Map
-        moves = []
-        neighbors = [(0, -1), (0, 1), (1, 0), (-1, 0)]
-        for dx, dy in neighbors:
-            nx, ny = x + dx, y + dy
-            cell_type = self.belief_map.get((nx, ny), 'Unknown')
-            if cell_type != 'Wall':
-                moves.append((nx, ny))
-                
-        # Check if Pacman is within 4 cells (Manhattan distance) and chase!
-        target = self.last_known_pacman_pos
-        if target:
-            dist = abs(target[0] - x) + abs(target[1] - y)
-            if dist <= 4:
-                # Greedy chase: pick move that minimizes distance to target
-                best_move = None
-                min_dist = float('inf')
-                
-                for mx, my in moves:
-                    d = abs(target[0] - mx) + abs(target[1] - my)
-                    if d < min_dist:
-                        min_dist = d
-                        best_move = (mx, my)
-                
-                if best_move:
-                    self.last_move = (best_move[0] - x, best_move[1] - y)
-                    return best_move
+        moves = self.get_valid_moves(grid)
         
         dirs = {'North': (0, -1), 'South': (0, 1), 'East': (1, 0), 'West': (-1, 0)}
         reverse_dir = {
             (0, -1): (0, 1), (0, 1): (0, -1), (1, 0): (-1, 0), (-1, 0): (1, 0)
         }
         
-        # 1. Add facts
+        # 1. Adicionar Factos
         for d_name, (dx, dy) in dirs.items():
             nx, ny = x + dx, y + dy
+            
+            # Facto: {D}Safe
             if (nx, ny) in moves:
                 self.kb.tell(Symbol(f"{d_name}Safe"))
+                
+                # Facto: {D}Backtrack
                 if self.last_move and (dx, dy) == reverse_dir.get(self.last_move):
                      self.kb.tell(Symbol(f"{d_name}Backtrack"))
             else:
+                # Se não é Safe, dizer que não o é (útil para o TT-entails)
                 self.kb.tell(Not(Symbol(f"{d_name}Safe")))
 
-        # 2. Rules
-        # GoodMove is any Safe move that is NOT Backtrack
-        for d in dirs:
-            self.kb.tell(Implication(And(Symbol(f"{d}Safe"), Not(Symbol(f"{d}Backtrack"))), Symbol(f"GoodMove{d}")))
-
-        # 3. Decide
-        # Get all GoodMoves
+        # 2. Adicionar Regras
+        # Regra Única: {D}Safe & ~{D}Backtrack -> GoodMove{D} (Movimento de Exploração)
         good_moves = []
         for d, (dx, dy) in dirs.items():
+            rule = Implication(
+                And(Symbol(f"{d}Safe"), Not(Symbol(f"{d}Backtrack"))), 
+                Symbol(f"GoodMove{d}")
+            )
+            self.kb.tell(rule)
+            
+            # 3. Decidir o Movimento
             if self.kb.ask(Symbol(f"GoodMove{d}")):
                 good_moves.append((dx, dy))
-        
-        # If we have good moves (forward/turn), pick one randomly
+
+        # Prioridade 1: GoodMove (Exploração Anti-Backtrack)
         if good_moves:
-            choice = random.choice(good_moves)
-            self.last_move = choice
-            return (x + choice[0], y + choice[1])
+            # Escolhe aleatoriamente um movimento que não seja retroceder
+            self.last_move = random.choice(good_moves)
+            return (x + self.last_move[0], y + self.last_move[1])
+        
+        # Fallback: Se estiver cercado ou apenas puder retroceder, retrocede
+        if moves: 
+            mx, my = random.choice(moves)
+            self.last_move = (mx - x, my - y)
+            return (mx, my)
             
-        # If no good moves (dead end), we must backtrack
-        if moves:
-            choice = random.choice(moves)
-            dx, dy = choice[0] - x, choice[1] - y
-            self.last_move = (dx, dy)
-            return choice
-            
-        return (x, y)
+        return None
