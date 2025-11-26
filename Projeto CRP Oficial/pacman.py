@@ -327,9 +327,9 @@ class Environment:
 
         if self.finished:
             if self.won:
-                buf.append(f"{YELLOW}VITÓRIA! VOCÊ COMEU TODAS AS PASTILHAS!{RESET}")
+                buf.append(f"{YELLOW}VITÓRIA!{RESET}")
             else:
-                buf.append(f"{GREEN}GAME OVER! OS FANTASMAS PEGARAM VOCÊ!{RESET}")
+                buf.append(f"{GREEN}GAME OVER!{RESET}")
 
         return '\n'.join(buf)
 
